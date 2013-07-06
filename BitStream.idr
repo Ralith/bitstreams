@@ -2,24 +2,20 @@ module BitStream
 
 data Ty = TyStream
         | TyOutput Nat
---        | TyFun Ty
+        -- | TyFun Ty
 
-data BitStream : (inputWidth : Nat) -> (environmentDepth : Nat) -> (carries : Nat) -> (type : Ty) -> Type where
-  Basis : Fin n -> BitStream n e O TyStream
-  Let : BitStream n e c1 TyStream -> BitStream n (S e) c2 t -> BitStream n e (c1 + c2) t
-  -- Lam : BitStream n (S e) c t -> BitStream n e c (TyFun t)
+data BitStream : (inputWidth : Nat) -> (environmentDepth : Nat) -> (type : Ty) -> Type where
+  Basis : Fin n -> BitStream n e TyStream
+  Let : BitStream n e TyStream -> BitStream n (S e) t -> BitStream n e t
+  -- Lam : BitStream n (S e) t -> BitStream n e (TyFun t)
   -- App : BitStream n e (TyFun t) -> BitStream n e TyStream -> BitStream n e t
-  Ref : Fin e -> BitStream n e O TyStream
-  Output : (bs : Vect (cr ** BitStream n e cr TyStream) oc) -> BitStream n e (sumCarries bs) (TyOutput oc)
-  Or : BitStream n e c1 TyStream -> BitStream n e c2 TyStream -> BitStream n e (c1 + c2) TyStream
-  And : BitStream n e c1 TyStream -> BitStream n e c2 TyStream -> BitStream n e (c1 + c2) TyStream
-  XOr : BitStream n e c1 TyStream ->  BitStream n e c2 TyStream -> BitStream n e (c1 + c2) TyStream
-  Not : BitStream n e c TyStream -> BitStream n e c TyStream
-  Add : BitStream n e c1 TyStream -> BitStream n e c2 TyStream -> BitStream n e (S (c1 + c2)) TyStream
-
-sumCarries : Vect (c ** BitStream n e c t) k -> Nat
-sumCarries [] = O
-sumCarries ((c ** _) :: xs) = c + sumCarries xs
+  Ref : Fin e -> BitStream n e TyStream
+  Output : Vect (BitStream n e TyStream) c -> BitStream n e (TyOutput c)
+  Or : BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
+  And : BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
+  XOr : BitStream n e TyStream ->  BitStream n e TyStream -> BitStream n e TyStream
+  Not : BitStream n e TyStream -> BitStream n e TyStream
+  Add : String -> BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
 
 dsl bitstream
   let = Let
@@ -28,10 +24,10 @@ dsl bitstream
   index_next = fS
 --  lambda = Lam
 
--- pure : BitStream n e c t -> BitStream n e c t
+-- pure : BitStream n e t -> BitStream n e t
 -- pure = id
 
--- (<$>) : BitStream n e c (TyFun t) -> BitStream n e c TyStream -> BitStream n e c t
+-- (<$>) : BitStream n e (TyFun t) -> BitStream n e TyStream -> BitStream n e t
 -- (<$>) = App
 
 instance Num Bits8 where
@@ -58,6 +54,31 @@ instance Num Bits64 where
 instance Eq Bits8 where
   x == y = intToBool (prim__eqB8 x y)
 
+instance Eq Bits64 where
+  x == y = intToBool (prim__eqB64 x y)
+
+instance Ord Bits64 where
+  (<) = boolOp prim__ltB64
+  (>) = boolOp prim__gtB64
+  (<=) = boolOp prim__lteB64
+  (>=) = boolOp prim__gteB64
+  compare l r = if l < r then LT
+                else if l > r then GT
+                     else EQ
+
+bitAt64 : Bits64 -> Bits64 -> Bool
+bitAt64 pos x = 0 /= prim__andB64 x (prim__shlB64 1 pos)
+
+showB64 : Bits64 -> String
+showB64 x = helper 64
+  where
+    helper : Bits64 -> String
+    helper 0 = ""
+    helper n = (if bitAt64 (n-1) x then "1" else "0") ++ helper (n-1)
+
+showB64x2 : Bits64x2 -> String
+showB64x2 v = showB64 (prim__indexB64x2 v 1) ++ showB64 (prim__indexB64x2 v 0)
+
 bitAt : Bits8 -> Bits8 -> Bool
 bitAt pos x = 0 /= prim__andB8 x (prim__shlB8 1 pos)
 
@@ -65,72 +86,105 @@ finToB8 : Fin n -> Bits8 -- Should be Fin 256, but a general weaken is too slow
 finToB8 fO = 0
 finToB8 (fS x) = 1 + finToB8 (weaken x)
 
-basis : Bits8 -> BitStream 8 e O TyStream
+basis : Bits8 -> BitStream 8 e TyStream
 basis b = helper 7
   where
-    helper : Fin 8 -> BitStream 8 e O TyStream
+    helper : Fin 8 -> BitStream 8 e TyStream
     helper fO = if bitAt 0 b then Basis 0 else Not (Basis 0)
     helper (fS x) = And (helper (weaken x)) (if bitAt (finToB8 (fS x)) b then Basis (fS x) else Not (Basis (fS x)))
 
-char : Char -> BitStream 8 e c TyStream
+char : Char -> BitStream 8 e TyStream
 char = basis . prim__truncInt_B8 . prim__charToInt
 
-all : (bs : Vect (c ** BitStream n e c TyStream) (S k)) -> BitStream n e (sumCarries bs) TyStream
+all : Vect (BitStream n e TyStream) (S k) -> BitStream n e TyStream
 all [x] = x
 all (x::(y::ys)) = And x (all (y::ys))
 
-any : (bs : Vect (c ** BitStream n e TyStream) (S k)) -> BitStream n e (sumCarries bs) TyStream
+any : Vect (BitStream n e TyStream) (S k) -> BitStream n e TyStream
 any [x] = x
 any (x::(y::ys)) = Or x (any (y::ys))
 
 digit : BitStream 8 e TyStream
 digit =
-  all [ (_ ** Not (Basis 7))
-      , (_ ** Not (Basis 6))
-      , (_ ** Basis 5)
-      , (_ ** Basis 4)
-      , (_ ** Or (Not (Basis 3))
-                 (And (Not (Basis 2))
-                      (Not (Basis 1))))
+  all [ Not (Basis 7)
+      , Not (Basis 6)
+      , Basis 5
+      , Basis 4
+      , Or (Not (Basis 3))
+           (And (Not (Basis 2))
+                (Not (Basis 1)))
       ]
 
-scan : BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
-scan fields cursors = And (Not fields) (Add cursors fields)
+scan : String -> BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
+scan id fields cursors = And (Not fields) (Add id cursors fields)
 
 interpTyBlock : Ty -> Type
 interpTyBlock TyStream = Bits64x2
 interpTyBlock (TyOutput n) = Vect Bits64x2 n
-interpTyBlock (TyFun t) = Bits64x2 -> (interpTyBlock t)
+--interpTyBlock (TyFun t) = Bits64x2 -> (interpTyBlock t)
+
+boolToB64 : Bool -> Bits64
+boolToB64 True = 1
+boolToB64 False = 0
 
 addWithCarry : Bits64 -> Bits64 -> (Bits64, Bits64)
-addWithCarry l r = (prim__zextInt_B64 ((18446744073709551615 - r) `prim__ltB64` l), l + r)
+addWithCarry l r = (boolToB64 ((18446744073709551615 - r) < l), l + r)
 
-evalBlock : Vect Bits64x2 n -> BitStream bases n ty -> Vect Bits64x2 bases -> interpTyBlock ty
-evalBlock _ (Basis i) bs = index i bs
-evalBlock env (Let val body) bs = evalBlock (evalBlock env val bs :: env) body bs
---evalBlock env (Lam body) bs = \v => evalBlock (v :: env) body bs
---evalBlock env (App f a) bs = (evalBlock env f bs) (evalBlock env a bs)
-evalBlock env (Ref var) _ = index var env
-evalBlock env (Output xs) bs = map (\b => evalBlock env b bs) xs
-evalBlock env (Or l r) bs = evalBlock env l bs `prim__orB64x2` evalBlock env r bs
-evalBlock env (And l r) bs = evalBlock env l bs `prim__andB64x2` evalBlock env r bs
-evalBlock env (XOr l r) bs = evalBlock env l bs `prim__xorB64x2` evalBlock env r bs
-evalBlock env (Not b) bs = prim__complB64x2 (evalBlock env b bs)
-evalBlock env (Add ls rs) bs =
-  let l = evalBlock env ls bs in
-  let r = evalBlock env rs bs in
+evalBlock : List (String, Bits64) -> Vect Bits64x2 n -> BitStream bases n ty -> Vect Bits64x2 bases
+         -> (List (String, Bits64), interpTyBlock ty)
+evalBlock cin _ (Basis i) bs = (Nil, index i bs)
+evalBlock cin env (Let val body) bs =
+  let (carries, valBlock) = evalBlock cin env val bs in
+  let (carries', result) = evalBlock cin (valBlock :: env) body bs in
+  (carries ++ carries', result)
+-- evalBlock cin env (Lam body) bs = \v => evalBlock cin (v :: env) body bs
+-- evalBlock cin env (App f a) bs = (evalBlock env f bs) (evalBlock env a bs)
+evalBlock cin env (Ref var) _ = (Nil, index var env)
+evalBlock cin env (Output xs) bs =
+  let pairs = map (\b => evalBlock cin env b bs) xs in
+  (concatMap fst (toList pairs), map snd pairs)
+evalBlock cin env (Or l r) bs =
+  let (carriesl, bl) = evalBlock cin env l bs in
+  let (carriesr, br) = evalBlock cin env r bs in
+  (carriesl ++ carriesr, bl `prim__orB64x2` br)
+evalBlock cin env (And l r) bs =
+  let (carriesl, bl) = evalBlock cin env l bs in
+  let (carriesr, br) = evalBlock cin env r bs in
+  (carriesl ++ carriesr, bl `prim__andB64x2` br)
+evalBlock cin env (XOr l r) bs =
+  let (carriesl, bl) = evalBlock cin env l bs in
+  let (carriesr, br) = evalBlock cin env r bs in
+  (carriesl ++ carriesr, bl `prim__xorB64x2` br)
+evalBlock cin env (Not b) bs =
+  let (carries, b) = evalBlock cin env b bs in
+  (carries, prim__complB64x2 b)
+evalBlock cin env (Add id ls rs) bs =
+  let (carries, l) = evalBlock cin env ls bs in
+  let (carries, r) = evalBlock cin env rs bs in
   let lh = prim__indexB64x2 l 0 in
   let ll = prim__indexB64x2 l 1 in
   let rh = prim__indexB64x2 r 0 in
   let rl = prim__indexB64x2 r 1 in
-  let (hsum, hcarry) = addWithCarry lh rh in
-  let (lsum, lcarry) = addWithCarry ll rl in
-  prim__mkB64x2 (hsum + lcarry) lsum
+  let (lcarry, lsum) = addWithCarry ll rl in
+  let (hcarry, hsum) = addWithCarry lh rh in
+  case lookup id cin of
+    Just oldCarry =>
+      let (lcarry', lsum') = addWithCarry lsum oldCarry in
+      let (hcarry', hsum') = addWithCarry hsum (lcarry + lcarry') in
+      (((id, hcarry + hcarry')::carries), prim__mkB64x2 hsum' lsum')
+    Nothing => (((id, hcarry)::carries), prim__mkB64x2 (hsum + lcarry) lsum)
 
 test : BitStream 1 e (TyOutput 2)
 test = bitstream (
   let b0 = Basis 0 in
-  Output [b0, Not b0]
+  Output [Add "a" b0 b0, b0]
+  )
+
+intStart : BitStream 8 e (TyOutput 1)
+intStart = bitstream (
+  let d = digit in
+  let nd = Not d in
+  Output [scan "a" d nd]
   )
 
 -- csv : BitStream 8 e (TyOutput 0)
@@ -142,7 +196,7 @@ test = bitstream (
 --   in 
 --   )
 
--- evalBytes : BitStream 8 O (TyOutput n) -> (s : String) -> List (Vect Bits8x16 n)
+-- evalBytes : BitStream 8 O (TyOutput n) -> (s : String) -> List (Vect Bits64x2 n)
 -- evalBytes b s = step 0
 --   where
 --     len : Int
