@@ -30,42 +30,6 @@ dsl bitstream
 -- (<$>) : BitStream n e (TyFun t) -> BitStream n e TyStream -> BitStream n e t
 -- (<$>) = App
 
-instance Num Bits8 where
-  (+) = prim__addB8
-  (-) = prim__subB8
-  (*) = prim__mulB8
-  abs = id
-  fromInteger = prim__truncBigInt_B8
-
-instance Num Bits32 where
-  (+) = prim__addB32
-  (-) = prim__subB32
-  (*) = prim__mulB32
-  abs = id
-  fromInteger = prim__truncBigInt_B32
-
-instance Num Bits64 where
-  (+) = prim__addB64
-  (-) = prim__subB64
-  (*) = prim__mulB64
-  abs = id
-  fromInteger = prim__truncBigInt_B64
-
-instance Eq Bits8 where
-  x == y = intToBool (prim__eqB8 x y)
-
-instance Eq Bits64 where
-  x == y = intToBool (prim__eqB64 x y)
-
-instance Ord Bits64 where
-  (<) = boolOp prim__ltB64
-  (>) = boolOp prim__gtB64
-  (<=) = boolOp prim__lteB64
-  (>=) = boolOp prim__gteB64
-  compare l r = if l < r then LT
-                else if l > r then GT
-                     else EQ
-
 bitAt64 : Bits64 -> Bits64 -> Bool
 bitAt64 pos x = 0 /= prim__andB64 x (prim__shlB64 1 pos)
 
