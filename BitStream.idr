@@ -81,3 +81,15 @@ digit =
 
 scan : String -> BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
 scan id fields cursors = And (Not fields) (Add id cursors fields)
+
+test : BitStream 1 e (TyOutput 2)
+test = bitstream (
+  let b0 = Basis 0 in
+  Output [Add "a" b0 b0, b0]
+  )
+
+intStart : BitStream 8 e (TyOutput 1)
+intStart = bitstream (
+  let d = digit in
+  Output [scan "a" d (Not d)]
+  )
