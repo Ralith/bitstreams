@@ -2,33 +2,36 @@ module BitStream
 
 data Ty = TyStream
         | TyOutput Nat
-        -- | TyFun Ty
+        | TyFun Ty -- return type
 
 data BitStream : (inputWidth : Nat) -> (environmentDepth : Nat) -> (type : Ty) -> Type where
   Basis : Fin n -> BitStream n e TyStream
-  Let : BitStream n e TyStream -> BitStream n (S e) t -> BitStream n e t
-  -- Lam : BitStream n (S e) t -> BitStream n e (TyFun t)
-  -- App : BitStream n e (TyFun t) -> BitStream n e TyStream -> BitStream n e t
+--  Let : BitStream n e TyStream -> BitStream n (S e) t -> BitStream n e t
+  Lam : BitStream n (S e) t -> BitStream n e (TyFun t)
+  App : BitStream n e (TyFun t) -> BitStream n e TyStream -> BitStream n e t
   Ref : Fin e -> BitStream n e TyStream
   Output : Vect (BitStream n e TyStream) c -> BitStream n e (TyOutput c)
   Or : BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
   And : BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
   XOr : BitStream n e TyStream ->  BitStream n e TyStream -> BitStream n e TyStream
   Not : BitStream n e TyStream -> BitStream n e TyStream
-  Add : String -> BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
+  Add : BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
+
+bslet : BitStream n e TyStream -> BitStream n (S e) t -> BitStream n e t
+bslet val body = App (Lam body) val
 
 dsl bitstream
-  let = Let
+  let = bslet
   variable = Ref
   index_first = fO
   index_next = fS
---  lambda = Lam
+  lambda = Lam
 
--- pure : BitStream n e t -> BitStream n e t
--- pure = id
+pure : BitStream n e t -> BitStream n e t
+pure = id
 
--- (<$>) : BitStream n e (TyFun t) -> BitStream n e TyStream -> BitStream n e t
--- (<$>) = App
+(<$>) : BitStream n e (TyFun t) -> BitStream n e TyStream -> BitStream n e t
+(<$>) = App
 
 bitAt64 : Bits64 -> Bits64 -> Bool
 bitAt64 pos x = 0 /= prim__andB64 x (prim__shlB64 1 pos)
@@ -79,17 +82,20 @@ digit =
                 (Not (Basis 1)))
       ]
 
-scan : String -> BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
-scan id fields cursors = And (Not fields) (Add id cursors fields)
+scan : BitStream n e (TyFun (TyFun TyStream))
+scan = bitstream (
+  \fields => \cursors =>
+    And (Not fields) (Add cursors fields)
+  )
 
 test : BitStream 1 e (TyOutput 2)
 test = bitstream (
   let b0 = Basis 0 in
-  Output [Add "a" b0 b0, b0]
+  Output [Add b0 b0, b0]
   )
 
-intStart : BitStream 8 e (TyOutput 1)
+intStart : BitStream 8 e TyStream
 intStart = bitstream (
   let d = digit in
-  Output [scan "a" d (Not d)]
+  [| scan d (Not d) |]
   )

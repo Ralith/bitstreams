@@ -2,10 +2,45 @@ module Main
 
 import BitStream
 
-interpTyBlock : Ty -> Type
-interpTyBlock TyStream = Bits64x2
-interpTyBlock (TyOutput n) = Vect Bits64x2 n
---interpTyBlock (TyFun t) = Bits64x2 -> (interpTyBlock t)
+%default total
+
+Carries : Type
+Carries = List Bits64
+
+data EvalBlock : Type -> Type where
+  EB : (Carries -> (Carries, t, Carries)) -> EvalBlock t
+
+runEval : Carries -> EvalBlock t -> (Carries, t)
+runEval cs (EB f) = let (nc, x, _) = f cs in (nc, x)
+
+instance Functor EvalBlock where
+  map f (EB g) = EB (\cs => let (nc, r, cs') = g cs in (nc, (f r), cs'))
+
+instance Applicative EvalBlock where
+  pure x = EB (\cs => ([], x, cs))
+  (EB f) <$> (EB x) = EB (\cs => let (nc, f', cs') = f cs in
+                                 let (nc', x', cs'') = x cs' in
+                                 (nc ++ nc', (f' x'), cs''))
+
+instance Monad EvalBlock where
+  (EB x) >>= f = EB (\cs => let (nc, x', cs') = x cs in
+                            let EB g = f x' in
+                            let (nc', r, cs'') = g cs' in
+                            (nc ++ nc', r, cs''))
+
+(>>=) : EvalBlock a -> (a -> EvalBlock b) -> EvalBlock b
+(>>=) x f = Prelude.Monad.(>>=) x f
+
+popCarry : EvalBlock Bits64
+popCarry = EB (\cs => ([], fromMaybe 0 (head' cs), fromMaybe [] (tail' cs)))
+
+tellCarry : Bits64 -> EvalBlock ()
+tellCarry c = EB (\cs => ([c], (), cs))
+
+evalBlockTy : Ty -> Type
+evalBlockTy TyStream = EvalBlock Bits64x2
+evalBlockTy (TyOutput n) = EvalBlock (Vect Bits64x2 n)
+evalBlockTy (TyFun t) = Bits64x2 -> (evalBlockTy t)
 
 boolToB64 : Bool -> Bits64
 boolToB64 True = 1
@@ -14,46 +49,55 @@ boolToB64 False = 0
 addWithCarry : Bits64 -> Bits64 -> (Bits64, Bits64)
 addWithCarry l r = (boolToB64 ((18446744073709551615 - r) < l), l + r)
 
-evalBlock : List (String, Bits64) -> Vect Bits64x2 n -> BitStream bases n ty -> Vect Bits64x2 bases
-         -> (List (String, Bits64), interpTyBlock ty)
-evalBlock cin _ (Basis i) bs = (Nil, index i bs)
-evalBlock cin env (Let val body) bs =
-  let (carries, valBlock) = evalBlock cin env val bs in
-  let (carries', result) = evalBlock cin (valBlock :: env) body bs in
-  (carries ++ carries', result)
--- evalBlock cin env (Lam body) bs = \v => evalBlock cin (v :: env) body bs
--- evalBlock cin env (App f a) bs = (evalBlock env f bs) (evalBlock env a bs)
-evalBlock cin env (Ref var) _ = (Nil, index var env)
-evalBlock cin env (Output xs) bs =
-  let pairs = map (\b => evalBlock cin env b bs) xs in
-  (concatMap fst (toList pairs), map snd pairs)
-evalBlock cin env (Or l r) bs =
-  let (carriesl, bl) = evalBlock cin env l bs in
-  let (carriesr, br) = evalBlock cin env r bs in
-  (carriesl ++ carriesr, bl `prim__orB64x2` br)
-evalBlock cin env (And l r) bs =
-  let (carriesl, bl) = evalBlock cin env l bs in
-  let (carriesr, br) = evalBlock cin env r bs in
-  (carriesl ++ carriesr, bl `prim__andB64x2` br)
-evalBlock cin env (XOr l r) bs =
-  let (carriesl, bl) = evalBlock cin env l bs in
-  let (carriesr, br) = evalBlock cin env r bs in
-  (carriesl ++ carriesr, bl `prim__xorB64x2` br)
-evalBlock cin env (Not b) bs =
-  let (carries, b) = evalBlock cin env b bs in
-  (carries, prim__complB64x2 b)
-evalBlock cin env (Add id ls rs) bs =
-  let (carries, l) = evalBlock cin env ls bs in
-  let (carries, r) = evalBlock cin env rs bs in
-  let lh = prim__indexB64x2 l 0 in
-  let ll = prim__indexB64x2 l 1 in
-  let rh = prim__indexB64x2 r 0 in
-  let rl = prim__indexB64x2 r 1 in
-  let (lcarry, lsum) = addWithCarry ll rl in
-  let (hcarry, hsum) = addWithCarry lh rh in
-  case lookup id cin of
-    Just oldCarry =>
-      let (lcarry', lsum') = addWithCarry lsum oldCarry in
-      let (hcarry', hsum') = addWithCarry hsum (lcarry + lcarry') in
-      (((id, hcarry + hcarry')::carries), prim__mkB64x2 hsum' lsum')
-    Nothing => (((id, hcarry)::carries), prim__mkB64x2 (hsum + lcarry) lsum)
+apply : EvalBlock (Bits64x2 -> a) -> EvalBlock Bits64x2 -> EvalBlock a
+apply = (<$>)
+
+ebmap : (Bits64x2 -> Bits64x2) -> EvalBlock Bits64x2 -> EvalBlock Bits64x2
+ebmap = map
+
+partial
+evalBlock : (bases : Vect Bits64x2 n) -> (env : Vect Bits64x2 m) -> BitStream n m ty -> evalBlockTy ty
+evalBlock bs _ (Basis i) = pure (index i bs)
+evalBlock bs env (Lam body) = \v => evalBlock bs (v :: env) body
+evalBlock {ty=TyStream} bs env (App f a) = do
+  arg <- the (evalBlockTy TyStream) (evalBlock bs env a)
+  (the (evalBlockTy (TyFun TyStream)) (evalBlock bs env f)) arg
+evalBlock _ env (Ref var) = pure (index var env)
+-- evalBlock bs env (Output xs) = sequence (the (List (EvalBlock Bits64x2)) (toList (map (evalBlock bs env) xs)))
+  -- let pairs = map (\b => evalBlock cin env b bs) xs in
+  -- (concatMap fst (toList pairs), map snd pairs)
+evalBlock bs env (Or l r) =
+  pure prim__orB64x2
+  <$> the (evalBlockTy TyStream) (evalBlock bs env l)
+  <$> the (evalBlockTy TyStream) (evalBlock bs env r)
+evalBlock bs env (And l r) =
+  pure prim__andB64x2
+  <$> the (evalBlockTy TyStream) (evalBlock bs env l)
+  <$> the (evalBlockTy TyStream) (evalBlock bs env r)
+evalBlock bs env (XOr l r) =
+  pure prim__xorB64x2
+  <$> the (evalBlockTy TyStream) (evalBlock bs env l)
+  <$> the (evalBlockTy TyStream) (evalBlock bs env r)
+evalBlock bs env (Not b) = ebmap prim__complB64x2 (the (evalBlockTy TyStream) (evalBlock bs env b))
+evalBlock bs env (Add ls rs) = do
+  carry <- popCarry
+  l <- the (evalBlockTy TyStream) (evalBlock bs env ls)
+  r <- the (evalBlockTy TyStream) (evalBlock bs env rs)
+  let lh = prim__indexB64x2 l 0
+  let ll = prim__indexB64x2 l 1
+  let rh = prim__indexB64x2 r 0
+  let rl = prim__indexB64x2 r 1
+  let (c1, ll') = addWithCarry ll carry
+  let (c2, lsum) = addWithCarry ll' rl
+  let (c3, rh') = addWithCarry rh (c1 + c2)
+  let (newCarry, hsum) = addWithCarry lh rh'
+  tellCarry newCarry
+  pure (prim__mkB64x2 hsum lsum)
+
+partial
+test : BitStream 1 0 (TyFun TyStream)
+test = bitstream (\x => Add (Add x x) (Basis fO))
+
+partial
+test' : Bits64x2 -> (List Bits64, Bits64x2)
+test' x = runEval [] ((the (evalBlockTy (TyFun TyStream)) (evalBlock [prim__mkB64x2 42 17] [] Main.test)) x)
