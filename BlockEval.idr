@@ -49,12 +49,6 @@ boolToB64 False = 0
 addWithCarry : Bits64 -> Bits64 -> (Bits64, Bits64)
 addWithCarry l r = (boolToB64 ((18446744073709551615 - r) < l), l + r)
 
-apply : EvalBlock (Bits64x2 -> a) -> EvalBlock Bits64x2 -> EvalBlock a
-apply = (<$>)
-
-ebmap : (Bits64x2 -> Bits64x2) -> EvalBlock Bits64x2 -> EvalBlock Bits64x2
-ebmap = map
-
 partial
 evalBlock : (bases : Vect Bits64x2 n) -> (env : Vect Bits64x2 m) -> BitStream n m ty -> evalBlockTy ty
 evalBlock bs _ (Basis i) = pure (index i bs)
@@ -66,19 +60,16 @@ evalBlock _ env (Ref var) = pure (index var env)
 -- evalBlock bs env (Output xs) = sequence (the (List (EvalBlock Bits64x2)) (toList (map (evalBlock bs env) xs)))
   -- let pairs = map (\b => evalBlock cin env b bs) xs in
   -- (concatMap fst (toList pairs), map snd pairs)
-evalBlock bs env (Or l r) =
-  pure prim__orB64x2
-  <$> the (evalBlockTy TyStream) (evalBlock bs env l)
-  <$> the (evalBlockTy TyStream) (evalBlock bs env r)
-evalBlock bs env (And l r) =
-  pure prim__andB64x2
-  <$> the (evalBlockTy TyStream) (evalBlock bs env l)
-  <$> the (evalBlockTy TyStream) (evalBlock bs env r)
-evalBlock bs env (XOr l r) =
-  pure prim__xorB64x2
-  <$> the (evalBlockTy TyStream) (evalBlock bs env l)
-  <$> the (evalBlockTy TyStream) (evalBlock bs env r)
-evalBlock bs env (Not b) = ebmap prim__complB64x2 (the (evalBlockTy TyStream) (evalBlock bs env b))
+evalBlock bs env (Or l r) = [| prim__orB64x2
+                               (the (evalBlockTy TyStream) (evalBlock bs env l))
+                               (the (evalBlockTy TyStream) (evalBlock bs env r)) |]
+evalBlock bs env (And l r) = [| prim__andB64x2
+                                (the (evalBlockTy TyStream) (evalBlock bs env l))
+                                (the (evalBlockTy TyStream) (evalBlock bs env r)) |]
+evalBlock bs env (XOr l r) = [| prim__xorB64x2
+                                (the (evalBlockTy TyStream) (evalBlock bs env l))
+                                (the (evalBlockTy TyStream) (evalBlock bs env r)) |]
+evalBlock bs env (Not b) = [| prim__complB64x2 (the (evalBlockTy TyStream) (evalBlock bs env b)) |]
 evalBlock bs env (Add ls rs) = do
   carry <- popCarry
   l <- the (evalBlockTy TyStream) (evalBlock bs env ls)
