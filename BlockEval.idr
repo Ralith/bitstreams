@@ -49,6 +49,19 @@ boolToB64 False = 0
 addWithCarry : Bits64 -> Bits64 -> (Bits64, Bits64)
 addWithCarry l r = (boolToB64 ((18446744073709551615 - r) < l), l + r)
 
+%assert_total
+addWithCarry128 : Bits64 -> Bits64x2 -> Bits64x2 -> (Bits64, Bits64x2)
+addWithCarry128 carry l r =
+  let lh = prim__indexB64x2 l 0 in
+  let ll = prim__indexB64x2 l 1 in
+  let rh = prim__indexB64x2 r 0 in
+  let rl = prim__indexB64x2 r 1 in
+  let (c1, rl') = addWithCarry rl carry in
+  let (c2, lsum) = addWithCarry ll rl' in
+  let (c3, rh') = addWithCarry rh (c1 + c2) in
+  let (newCarry, hsum) = addWithCarry lh rh' in
+  (newCarry + c3, prim__mkB64x2 hsum lsum)
+
 partial
 evalBlock : (bases : Vect Bits64x2 n) -> (env : Vect Bits64x2 m) -> BitStream n m ty -> evalBlockTy ty
 evalBlock bs _ (Basis i) = pure (index i bs)
@@ -71,24 +84,17 @@ evalBlock bs env (XOr l r) = [| prim__xorB64x2
                                 (the (evalBlockTy TyStream) (evalBlock bs env r)) |]
 evalBlock bs env (Not b) = [| prim__complB64x2 (the (evalBlockTy TyStream) (evalBlock bs env b)) |]
 evalBlock bs env (Add ls rs) = do
-  carry <- popCarry
+  carryIn <- popCarry
   l <- the (evalBlockTy TyStream) (evalBlock bs env ls)
   r <- the (evalBlockTy TyStream) (evalBlock bs env rs)
-  let lh = prim__indexB64x2 l 0
-  let ll = prim__indexB64x2 l 1
-  let rh = prim__indexB64x2 r 0
-  let rl = prim__indexB64x2 r 1
-  let (c1, ll') = addWithCarry ll carry
-  let (c2, lsum) = addWithCarry ll' rl
-  let (c3, rh') = addWithCarry rh (c1 + c2)
-  let (newCarry, hsum) = addWithCarry lh rh'
-  tellCarry newCarry
-  pure (prim__mkB64x2 hsum lsum)
+  let x = addWithCarry128 carryIn l r
+  tellCarry (fst x)
+  pure (snd x)
 
 partial
 test : BitStream 1 0 (TyFun TyStream)
 test = bitstream (\x => Add (Add x x) (Basis fO))
 
 partial
-test' : Bits64x2 -> (List Bits64, Bits64x2)
-test' x = runEval [] ((the (evalBlockTy (TyFun TyStream)) (evalBlock [prim__mkB64x2 42 17] [] Main.test)) x)
+test' : List Bits64 -> Bits64x2 -> (List Bits64, Bits64x2)
+test' cs x = runEval cs ((the (evalBlockTy (TyFun TyStream)) (evalBlock [prim__mkB64x2 0 1] [] Main.test)) x)
