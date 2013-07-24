@@ -1,4 +1,4 @@
-module Main
+module BlockEval
 
 import BitStream
 
@@ -22,6 +22,9 @@ instance Applicative EvalBlock where
                                  let (nc', x', cs'') = x cs' in
                                  (nc ++ nc', (f' x'), cs''))
 
+pure : a -> EvalBlock a
+pure = Prelude.Applicative.pure
+
 instance Monad EvalBlock where
   (EB x) >>= f = EB (\cs => let (nc, x', cs') = x cs in
                             let EB g = f x' in
@@ -31,16 +34,26 @@ instance Monad EvalBlock where
 (>>=) : EvalBlock a -> (a -> EvalBlock b) -> EvalBlock b
 (>>=) x f = Prelude.Monad.(>>=) x f
 
+bind : EvalBlock a -> (a -> EvalBlock b) -> EvalBlock b
+bind x f = Prelude.Monad.(>>=) x f
+
+abind : EvalBlock a -> EvalBlock b -> EvalBlock b
+abind x y = Prelude.Monad.(>>=) x (\_ => y)
+
 popCarry : EvalBlock Bits64
 popCarry = EB (\cs => ([], fromMaybe 0 (head' cs), fromMaybe [] (tail' cs)))
 
 tellCarry : Bits64 -> EvalBlock ()
 tellCarry c = EB (\cs => ([c], (), cs))
 
-evalBlockTy : Ty -> Type
-evalBlockTy TyStream = EvalBlock Bits64x2
-evalBlockTy (TyOutput n) = EvalBlock (Vect Bits64x2 n)
-evalBlockTy (TyFun t) = Bits64x2 -> (evalBlockTy t)
+mutual
+  evalBlockTy' : Ty -> Type
+  evalBlockTy' TyStream = Bits64x2
+  evalBlockTy' (TyOutput n) = Vect Bits64x2 n
+  evalBlockTy' (TyFun t) = Bits64x2 -> evalBlockTy t
+
+  evalBlockTy : Ty -> Type
+  evalBlockTy t = EvalBlock (evalBlockTy' t)
 
 boolToB64 : Bool -> Bits64
 boolToB64 True = 1
@@ -62,17 +75,24 @@ addWithCarry128 carry l r =
   let (newCarry, hsum) = addWithCarry lh rh' in
   (newCarry + c3, prim__mkB64x2 hsum lsum)
 
+mapEB : (a -> EvalBlock b) -> Vect a n -> EvalBlock (Vect b n)
+mapEB f [] = pure []
+mapEB f (x::xs) = do
+  x' <- f x
+  xs' <- mapEB f xs
+  pure (x'::xs')
+
 partial
-evalBlock : (bases : Vect Bits64x2 n) -> (env : Vect Bits64x2 m) -> BitStream n m ty -> evalBlockTy ty
+evalBlock : (bases : Vect Bits64x2 n) -> (env : Vect Bits64x2 m) -> {static} BitStream n m ty -> evalBlockTy ty
 evalBlock bs _ (Basis i) = pure (index i bs)
-evalBlock bs env (Lam body) = \v => evalBlock bs (v :: env) body
-evalBlock {ty=TyStream} bs env (App f a) = do
-  arg <- the (evalBlockTy TyStream) (evalBlock bs env a)
-  (the (evalBlockTy (TyFun TyStream)) (evalBlock bs env f)) arg
+evalBlock {ty=TyFun rty} bs env (Lam body) = pure (\v => evalBlock bs (v :: env) body)
+evalBlock bs env (App f x) = do
+  arg <- the (evalBlockTy TyStream) (evalBlock bs env x)
+  fn <- evalBlock bs env f
+  fn arg
 evalBlock _ env (Ref var) = pure (index var env)
--- evalBlock bs env (Output xs) = sequence (the (List (EvalBlock Bits64x2)) (toList (map (evalBlock bs env) xs)))
-  -- let pairs = map (\b => evalBlock cin env b bs) xs in
-  -- (concatMap fst (toList pairs), map snd pairs)
+evalBlock {n=n} {m=m} bs env (Output xs) =
+  mapEB (the (BitStream n m TyStream -> evalBlockTy TyStream) (evalBlock bs env)) xs
 evalBlock bs env (Or l r) = [| prim__orB64x2
                                (the (evalBlockTy TyStream) (evalBlock bs env l))
                                (the (evalBlockTy TyStream) (evalBlock bs env r)) |]
@@ -91,10 +111,10 @@ evalBlock bs env (Add ls rs) = do
   tellCarry (fst x)
   pure (snd x)
 
-partial
-test : BitStream 1 0 (TyFun TyStream)
-test = bitstream (\x => Add (Add x x) (Basis fO))
+test : BitStream 2 0 (TyFun TyStream)
+test = bitstream (\x => Or (Add x (Basis 1)) (Add (Basis 0) (Basis 0)))
 
 partial
 test' : List Bits64 -> Bits64x2 -> (List Bits64, Bits64x2)
-test' cs x = runEval cs ((the (evalBlockTy (TyFun TyStream)) (evalBlock [prim__mkB64x2 0 1] [] Main.test)) x)
+test' cs x = runEval cs (do fn <- the (evalBlockTy (TyFun TyStream)) (evalBlock [prim__mkB64x2 0 0, prim__mkB64x2 0 0] [] BlockEval.test)
+                            fn x)
