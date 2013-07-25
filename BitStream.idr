@@ -36,12 +36,22 @@ pure = id
 bitAt64 : Bits64 -> Bits64 -> Bool
 bitAt64 pos x = 0 /= prim__andB64 x (prim__shlB64 1 pos)
 
+bitAt8 : Bits8 -> Bits8 -> Bool
+bitAt8 pos x = 0 /= prim__andB8 x (prim__shlB8 1 pos)
+
+showB8 : Bits8 -> String
+showB8 x = helper 8
+  where
+    helper : Bits8 -> String
+    helper n = if n == 0 then ""
+               else (if bitAt8 (n-1) x then "1" else "0") ++ helper (n-1)
+
 showB64 : Bits64 -> String
 showB64 x = helper 64
   where
     helper : Bits64 -> String
-    helper 0 = ""
-    helper n = (if bitAt64 (n-1) x then "1" else "0") ++ helper (n-1)
+    helper n = if n == 0 then ""
+               else (if bitAt64 (n-1) x then "1" else "0") ++ helper (n-1)
 
 showB64x2 : Bits64x2 -> String
 showB64x2 v = showB64 (prim__indexB64x2 v 1) ++ showB64 (prim__indexB64x2 v 0)
