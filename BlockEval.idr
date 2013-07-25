@@ -111,11 +111,19 @@ evalBlock bs env (Add ls rs) = do
   let x = addWithCarry128 carryIn l r
   tellCarry (fst x)
   pure (snd x)
+evalBlock bs env (Advance shift s) = do
+  carryIn <- popCarry
+  block <- evalBlock bs env s
+  let backshift = 64 - shift
+  tellCarry (prim__lshrB64 (prim__indexB64x2 block 0) backshift)
+  let a = prim__shlB64x2 block (uniformB64x2 shift)
+  pure (prim__mkB64x2 (prim__orB64 (prim__indexB64x2 a 0) (prim__lshrB64 (prim__indexB64x2 block 1) backshift))
+                      (prim__orB64 (prim__indexB64x2 a 1) carryIn))
 
 test : BitStream 2 0 (TyFun TyStream)
-test = bitstream (\x => Add x (Pattern (toB128 1)))
+test = bitstream (\x => Advance 1 x)
 
 partial
 test' : Bits64x2 -> (List Bits64, Bits64x2)
-test' x = runEval [] (do fn <- the (evalBlockTy (TyFun TyStream)) (evalBlock [prim__mkB64x2 0 0, prim__mkB64x2 0 0] [] BlockEval.test)
+test' x = runEval [] (do fn <- the (evalBlockTy (TyFun TyStream)) (evalBlock [uniformB64x2 (pow 2 128 - 1), uniformB64x2 0] [] BlockEval.test)
                          fn x)

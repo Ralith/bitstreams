@@ -16,6 +16,7 @@ data BitStream : (inputWidth : Nat) -> (environmentDepth : Nat) -> (type : Ty) -
   XOr : BitStream n e TyStream ->  BitStream n e TyStream -> BitStream n e TyStream
   Not : BitStream n e TyStream -> BitStream n e TyStream
   Add : BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
+  Advance : Bits64 -> BitStream n e TyStream -> BitStream n e TyStream
 
 bslet : BitStream n e TyStream -> BitStream n (S e) t -> BitStream n e t
 bslet val body = App (Lam body) val
