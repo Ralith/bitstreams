@@ -83,8 +83,16 @@ mapEB f (x::xs) = do
   pure (x'::xs')
 
 partial
+flipFin : Fin n -> Fin n
+flipFin fO = last
+flipFin (fS k) =
+  case flipFin (weaken k) of
+    fO => fO
+    fS j => weaken j
+
+partial
 evalBlock : (bases : Vect Bits64x2 n) -> (env : Vect Bits64x2 m) -> {static} BitStream n m ty -> evalBlockTy ty
-evalBlock bs _ (Basis i) = pure (index i bs)
+evalBlock bs _ (Basis i) = pure (index (flipFin i) bs)
 evalBlock {ty=TyFun rty} bs env (Lam body) = pure (\v => evalBlock bs (v :: env) body)
 evalBlock bs env (App f x) = do
   arg <- the (evalBlockTy TyStream) (evalBlock bs env x)
