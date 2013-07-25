@@ -125,11 +125,10 @@ parseString {n=n} bs str = if rem /= 0 then parseString bs (str `Builtins.(++)` 
       if offset /= len - 128 then outputs :: (helper (offset + 128) carriesOut)
       else [outputs]
 
-passthrough : BitStream 8 0 (TyOutput 8)
-passthrough = Output [Basis 7, Basis 6, Basis 5, Basis 4, Basis 3, Basis 2, Basis 1, Basis 0]
+passthrough : BitStream 8 0 (TyOutput 9)
+passthrough = Output [Basis 7, Basis 6, Basis 5, Basis 4, Basis 3, Basis 2, Basis 1, Basis 0, Add (Basis 0) (Basis 1)]
 
 partial
 main : IO ()
 main = do
-  --mapIO (putStrLn . prim__strRev . showB128) . transpose . packBytes 0 $ ipsum
-  mapIO' (\out => do { mapIO (putStrLn . prim__strRev . showB128) out; putStrLn ""; }) (parseString (Output [digit]) forble)
+  mapIO' (\out => do { mapIO (putStrLn . prim__strRev . showB128) out; putStrLn ""; }) (parseString passthrough (pack (replicate 300 '\255')))
