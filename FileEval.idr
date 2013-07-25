@@ -8,15 +8,6 @@ import BlockEval
 packuswb : Bits16x8 -> Bits16x8 -> Bits8x16
 packuswb a b = unsafePerformIO (mkForeign (FFun "llvm.x86.sse2.packuswb.128" [FBits16x8, FBits16x8] FBits8x16) a b)
 
--- FIXME: Proper definition needs inliner
-%assert_total
-psrldq : Bits64x2 -> Bits32 -> Bits64x2
---psrldq v s = unsafePerformIO (mkForeign (FFun "llvm.x86.sse2.psrl.dq" [FBits64x2, FBits32] FBits64x2) v s)
-psrldq v s = helper s v
-  where
-    helper n x = if n == 0 then x
-                 else helper (n-1) (unsafePerformIO (mkForeign (FFun "lshr128byte" [FBits64x2] FBits64x2) x))
-
 packh16 : Bits64x2 -> Bits64x2 -> Bits64x2
 packh16 a b = prim__bitcastB8x16_B64x2 (packuswb (frob a) (frob b))
   where
@@ -34,90 +25,44 @@ vsel cond then_ else_ =
   prim__orB64x2 (prim__andB64x2 cond then_)
                 (prim__andB64x2 (prim__complB64x2 cond) else_)
 
--- simd_or(simd128<64>::srli<sh>(arg1), _mm_srli_si128(simd128<64>::slli<((128-sh)&63)>(arg1), (int32_t)(8)))
--- s < 64
-lshr128 : Bits64x2 -> Bits8 -> Bits64x2
-lshr128 x s = prim__orB64x2 (prim__lshrB64x2 x (toVecShift s))
-                            (psrldq (prim__shlB64x2 x (toVecShift ((128 - s) `prim__andB8` 63))) 8)
-  where
-    toVecShift : Bits8 -> Bits64x2
-    toVecShift s = uniformB64x2 (prim__zextB8_B64 s)
+%assert_total
+flipB64x2 : Bits64x2 -> Bits64x2
+flipB64x2 v = prim__mkB64x2 (prim__indexB64x2 v 1) (prim__indexB64x2 v 0)
 
-packl8 : Bits64x2 -> Bits64x2 -> Bits64x2
-packl8 a b = packl16 (frob a) (frob b)
-  where
-    frob : Bits64x2 -> Bits64x2
-    frob x = vsel (uniformB64x2 0xF0F0F0F0F0F0F0F0) (lshr128 x 4) x
-
-packh8 : Bits64x2 -> Bits64x2 -> Bits64x2
-packh8 a b = packl8 (frob a) (frob b)
-  where
-    frob : Bits64x2 -> Bits64x2
-    frob x = prim__lshrB64x2 x (uniformB64x2 4)
-
-packl4 : Bits64x2 -> Bits64x2 -> Bits64x2
-packl4 a b = packl8 (frob a) (frob b)
-  where
-    frob : Bits64x2 -> Bits64x2
-    frob x = vsel (uniformB64x2 0xCCCCCCCCCCCCCCCC) (lshr128 x 2) x
-
-packh4 : Bits64x2 -> Bits64x2 -> Bits64x2
-packh4 a b = packl4 (frob a) (frob b)
-  where
-    frob : Bits64x2 -> Bits64x2
-    frob x = prim__lshrB64x2 x (uniformB64x2 2)
-
-packl2 : Bits64x2 -> Bits64x2 -> Bits64x2
-packl2 a b = packl4 (frob a) (frob b)
-  where
-    frob : Bits64x2 -> Bits64x2
-    frob x = vsel (uniformB64x2 0xAAAAAAAAAAAAAAAA) (lshr128 x 1) x
-
-packh2 : Bits64x2 -> Bits64x2 -> Bits64x2
-packh2 a b = packl2 (frob a) (frob b)
-  where
-    frob x = prim__lshrB64x2 x (uniformB64x2 1)
-
--- FIXME: This shouldn't need to be factored out
-transpose2 : Bits64x2 -> Bits64x2 -> Bits64x2 -> Bits64x2 -> Bits64x2 -> Bits64x2 -> Bits64x2 -> Bits64x2 -> Vect Bits64x2 8
-transpose2 bit0123_0 bit0123_1 bit0123_2 bit0123_3 bit4567_0 bit4567_1 bit4567_2 bit4567_3 =
-  let bit01_0 = packh4 bit0123_0 bit0123_1 in
-  let bit01_1 = packh4 bit0123_2 bit0123_3 in
-  let bit23_0 = packl4 bit0123_0 bit0123_1 in
-  let bit23_1 = packl4 bit0123_2 bit0123_3 in
-  let bit45_0 = packh4 bit4567_0 bit4567_1 in
-  let bit45_1 = packh4 bit4567_2 bit4567_3 in
-  let bit67_0 = packl4 bit4567_0 bit4567_1 in
-  let bit67_1 = packl4 bit4567_2 bit4567_3 in
-  [ packh2 bit01_0 bit01_1, packl2 bit01_0 bit01_1
-  , packh2 bit23_0 bit23_1, packl2 bit23_0 bit23_1
-  , packh2 bit45_0 bit45_1, packl2 bit45_0 bit45_1
-  , packh2 bit67_0 bit67_1, packl2 bit67_0 bit67_1
-  ]
-
--- lib/s2p.hpp:54 s2p_ideal
 transpose : Vect Bits8x16 8 -> Vect Bits64x2 8
 transpose xs =
-   let a = get 0 in
-   let b = get 1 in
-   let c = get 2 in
-   let d = get 3 in
-   let e = get 4 in
-   let f = get 5 in
-   let g = get 6 in
-   let h = get 7 in
-   let bit0123_0 = packh8 a b in
-   let bit0123_1 = packh8 c d in
-   let bit0123_2 = packh8 e f in
-   let bit0123_3 = packh8 g h in
-   let bit4567_0 = packl8 a b in
-   let bit4567_1 = packl8 c d in
-   let bit4567_2 = packl8 e f in
-   let bit4567_3 = packl8 g h in
-   transpose2 bit0123_0 bit0123_1 bit0123_2 bit0123_3 bit4567_0 bit4567_1 bit4567_2 bit4567_3
+   let s0 = get 0 in
+   let s1 = get 1 in
+   let s2 = get 2 in
+   let s3 = get 3 in
+   let s4 = get 4 in
+   let s5 = get 5 in
+   let s6 = get 6 in
+   let s7 = get 7 in
+   let (b0246_0, b1357_0) = step s0 s1 (uniformB64x2 0xAAAAAAAAAAAAAAAA) 1 in
+   let (b0246_1, b1357_1) = step s2 s3 (uniformB64x2 0xAAAAAAAAAAAAAAAA) 1 in
+   let (b0246_2, b1357_2) = step s4 s5 (uniformB64x2 0xAAAAAAAAAAAAAAAA) 1 in
+   let (b0246_3, b1357_3) = step s6 s7 (uniformB64x2 0xAAAAAAAAAAAAAAAA) 1 in
+   let (b04_0, b26_0) = step b0246_0 b0246_1 (uniformB64x2 0xCCCCCCCCCCCCCCCC) 2 in
+   let (b04_1, b26_1) = step b0246_2 b0246_3 (uniformB64x2 0xCCCCCCCCCCCCCCCC) 2 in
+   let (b15_0, b37_0) = step b1357_0 b1357_1 (uniformB64x2 0xCCCCCCCCCCCCCCCC) 2 in
+   let (b15_1, b37_1) = step b1357_2 b1357_3 (uniformB64x2 0xCCCCCCCCCCCCCCCC) 2 in
+   let (p0, p4) = step b04_0 b04_1 (uniformB64x2 0xF0F0F0F0F0F0F0F0) 4 in
+   let (p1, p5) = step b15_0 b15_1 (uniformB64x2 0xF0F0F0F0F0F0F0F0) 4 in
+   let (p2, p6) = step b26_0 b26_1 (uniformB64x2 0xF0F0F0F0F0F0F0F0) 4 in
+   let (p3, p7) = step b37_0 b37_1 (uniformB64x2 0xF0F0F0F0F0F0F0F0) 4 in
+   map flipB64x2 [p7, p6, p5, p4, p3, p2, p1, p0] -- TODO: Why is the flip needed?
   where
     get : Fin 8 -> Bits64x2
     get i = prim__bitcastB8x16_B64x2 (index i xs)
+
+    step : Bits64x2 -> Bits64x2 -> Bits64x2 -> Bits16 -> (Bits64x2, Bits64x2)
+    step s0 s1 himask shift =
+      let t0 = packh16 s0 s1 in
+      let t1 = packl16 s0 s1 in
+      ( vsel himask t0 (prim__bitcastB16x8_B64x2 (prim__lshrB16x8 (prim__bitcastB64x2_B16x8 t1) (uniformB16x8 shift)))
+      , vsel himask (prim__bitcastB16x8_B64x2 (prim__shlB16x8 (prim__bitcastB64x2_B16x8 t0) (uniformB16x8 shift))) t1
+      )
 
 ApplyTy : Type -> Type -> Nat -> Type
 ApplyTy r _ O = r
@@ -127,9 +72,9 @@ apply : (ApplyTy a b n) -> Vect b n -> a
 apply {n=O}   x [] = x
 apply {n=S _} f (x::xs) = apply (f x) xs
 
-partial
-packBytes : String -> Vect Bits8x16 8
-packBytes xs = map take16 [0,1,2,3,4,5,6,7]
+partial -- TODO: Should reduce to memcpy
+packBytes : Int -> String -> Vect Bits8x16 8
+packBytes start xs = map take16 [0,1,2,3,4,5,6,7]
   where
     partial
     b : Int -> Bits8
@@ -137,13 +82,13 @@ packBytes xs = map take16 [0,1,2,3,4,5,6,7]
 
     partial
     take16 : Int -> Bits8x16
-    take16 off = apply prim__mkB8x16 (map (b . ((16*off)+)) [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15])
+    take16 off = apply prim__mkB8x16 (map (b . ((16*off+start)+)) [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15])
 
 ipsum : String
 ipsum = "Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
 
 forble : String
-forble = "22:17:49 < Ralith> winterwyn: you can now operate on those 128 characters simultaneously with a single instruction :D 22:17:53 < winterwyn> I'm sure that was readily apparent to one skilled in the art"
+forble = "22:17:49 < Ralith> winterwyn: you can now operate on those 128 characters simultaneously with a single instruction :D 22:17:53 < winterwyn> I'm sure that was readily apparent to one skilled in the art 42"
 
 mapIO : (a -> IO ()) -> Vect a n -> IO ()
 mapIO _ [] = pure ()
@@ -151,17 +96,40 @@ mapIO f (x::xs) = do
   f x
   mapIO f xs
 
+mapIO' : (a -> IO ()) -> List a -> IO ()
+mapIO' _ [] = pure ()
+mapIO' f (x::xs) = do
+  f x
+  mapIO' f xs
+
 partial
 getByte : String -> Int -> Bits8
 getByte str idx = prim__truncInt_B8 (prim__charToInt (prim__strIndex str idx))
 
-partial
-parseString : {static} BitStream 8 0 (TyOutput n) -> String -> Vect Bits64x2 n
-parseString bs str = snd (runEval [] (evalBlock (transpose (packBytes str)) [] bs))
+%assert_total
+parseString : {static} BitStream 8 0 (TyOutput n) -> String -> List (Vect Bits64x2 n)
+parseString {n=n} bs str = if rem /= 0 then parseString bs (str `Builtins.(++)` pack (replicate (fromInteger (prim__zextInt_BigInt (128 - rem))) ' ')) -- TODO: Pad with \0
+                           else helper 0 []
+  where
+    len : Int
+    len = prim_lenString str
 
-passthrough : BitStream 8 0 (TyOutput 9)
-passthrough = Output [Add (Basis 6) (Basis 7), Basis 0, Basis 1, Basis 2, Basis 3, Basis 4, Basis 5, Basis 6, Basis 7]
+    %assert_total
+    rem : Int
+    rem = prim__sremInt len 128
+
+    %assert_total
+    helper : Int -> List Bits64 -> List (Vect Bits64x2 n)
+    helper offset carriesIn =
+      let (carriesOut, outputs) = runEval carriesIn (evalBlock (transpose (packBytes offset str)) [] bs) in
+      if offset /= len - 128 then outputs :: (helper (offset + 128) carriesOut)
+      else [outputs]
+
+passthrough : BitStream 8 0 (TyOutput 8)
+passthrough = Output [Basis 7, Basis 6, Basis 5, Basis 4, Basis 3, Basis 2, Basis 1, Basis 0]
 
 partial
 main : IO ()
-main = mapIO (putStrLn . showB64x2) (parseString (Output [digit]) forble)
+main = do
+  --mapIO (putStrLn . prim__strRev . showB128) . transpose . packBytes 0 $ ipsum
+  mapIO' (\out => do { mapIO (putStrLn . prim__strRev . showB128) out; putStrLn ""; }) (parseString (Output [digit]) forble)

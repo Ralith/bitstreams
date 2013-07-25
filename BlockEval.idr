@@ -82,17 +82,10 @@ mapEB f (x::xs) = do
   xs' <- mapEB f xs
   pure (x'::xs')
 
-partial
-flipFin : Fin n -> Fin n
-flipFin fO = last
-flipFin (fS k) =
-  case flipFin (weaken k) of
-    fO => fO
-    fS j => weaken j
-
-partial
+%assert_total
 evalBlock : (bases : Vect Bits64x2 n) -> (env : Vect Bits64x2 m) -> {static} BitStream n m ty -> evalBlockTy ty
-evalBlock bs _ (Basis i) = pure (index (flipFin i) bs)
+evalBlock _ _ (Pattern x) = pure x
+evalBlock bs _ (Basis i) = pure (index i bs)
 evalBlock {ty=TyFun rty} bs env (Lam body) = pure (\v => evalBlock bs (v :: env) body)
 evalBlock bs env (App f x) = do
   arg <- the (evalBlockTy TyStream) (evalBlock bs env x)
@@ -120,9 +113,9 @@ evalBlock bs env (Add ls rs) = do
   pure (snd x)
 
 test : BitStream 2 0 (TyFun TyStream)
-test = bitstream (\x => Or (Add x (Basis 1)) (Add (Basis 0) (Basis 0)))
+test = bitstream (\x => Add x (Pattern (toB128 1)))
 
 partial
-test' : List Bits64 -> Bits64x2 -> (List Bits64, Bits64x2)
-test' cs x = runEval cs (do fn <- the (evalBlockTy (TyFun TyStream)) (evalBlock [prim__mkB64x2 0 0, prim__mkB64x2 0 0] [] BlockEval.test)
-                            fn x)
+test' : Bits64x2 -> (List Bits64, Bits64x2)
+test' x = runEval [] (do fn <- the (evalBlockTy (TyFun TyStream)) (evalBlock [prim__mkB64x2 0 0, prim__mkB64x2 0 0] [] BlockEval.test)
+                         fn x)

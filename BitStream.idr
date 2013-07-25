@@ -5,8 +5,8 @@ data Ty = TyStream
         | TyFun Ty -- return type
 
 data BitStream : (inputWidth : Nat) -> (environmentDepth : Nat) -> (type : Ty) -> Type where
+  Pattern : Bits64x2 -> BitStream n e TyStream
   Basis : Fin n -> BitStream n e TyStream
---  Let : BitStream n e TyStream -> BitStream n (S e) t -> BitStream n e t
   Lam : BitStream n (S e) t -> BitStream n e (TyFun t)
   App : BitStream n e (TyFun t) -> BitStream n e TyStream -> BitStream n e t
   Ref : Fin e -> BitStream n e TyStream
@@ -19,6 +19,9 @@ data BitStream : (inputWidth : Nat) -> (environmentDepth : Nat) -> (type : Ty) -
 
 bslet : BitStream n e TyStream -> BitStream n (S e) t -> BitStream n e t
 bslet val body = App (Lam body) val
+
+toB128 : Integer -> Bits64x2
+toB128 x = prim__mkB64x2 (prim__truncBigInt_B64 (prim__ashrBigInt x 64)) (prim__truncBigInt_B64 x)
 
 dsl bitstream
   let = bslet
@@ -53,8 +56,8 @@ showB64 x = helper 64
     helper n = if n == 0 then ""
                else (if bitAt64 (n-1) x then "1" else "0") ++ helper (n-1)
 
-showB64x2 : Bits64x2 -> String
-showB64x2 v = showB64 (prim__indexB64x2 v 1) ++ showB64 (prim__indexB64x2 v 0)
+showB128 : Bits64x2 -> String
+showB128 v = showB64 (prim__indexB64x2 v 0) ++ showB64 (prim__indexB64x2 v 1)
 
 bitAt : Bits8 -> Bits8 -> Bool
 bitAt pos x = 0 /= prim__andB8 x (prim__shlB8 1 pos)
