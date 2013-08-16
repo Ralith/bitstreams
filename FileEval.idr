@@ -1,4 +1,4 @@
-module Main
+module FileEval
 
 import BitStream
 import BlockEval
@@ -82,13 +82,10 @@ packBytes start xs = map take16 [0,1,2,3,4,5,6,7]
 
     partial
     take16 : Int -> Bits8x16
-    take16 off = apply prim__mkB8x16 (map (b . ((16*off+start)+)) [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15])
+    take16 off = apply prim__mkB8x16 (map (\x => b ((16*off+start)+x)) [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15])
 
 ipsum : String
 ipsum = "Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
-
-forble : String
-forble = "22:17:49 < Ralith> winterwyn: you can now operate on those 128 characters simultaneously with a single instruction :D 22:17:53 < winterwyn> I'm sure that was readily apparent to one skilled in the art 42"
 
 mapIO : (a -> IO ()) -> Vect a n -> IO ()
 mapIO _ [] = pure ()
@@ -128,7 +125,10 @@ parseString {n=n} bs str = if rem /= 0 then parseString bs (str `Builtins.(++)` 
 passthrough : BitStream 8 0 (TyOutput 10)
 passthrough = Output [Basis 7, Basis 6, Basis 5, Basis 4, Basis 3, Basis 2, Basis 1, Basis 0, Add (Basis 0) (Basis 1), Advance 4 (Basis 0)]
 
+showBlock : Vect Bits64x2 n -> String
+showBlock b = foldl (++) "" (intersperse "\n" (toList (map (\x => prim__strRev (showB128 x)) b)))
+
 partial
 main : IO ()
 main = do
-  mapIO' (\out => do { mapIO (putStrLn . prim__strRev . showB128) out; putStrLn ""; }) (parseString passthrough (pack (replicate 300 '\255')))
+  mapIO' (\out => do { putStrLn (showBlock out); putStrLn ""; }) (parseString passthrough (pack (replicate 300 '\255')))

@@ -1,5 +1,7 @@
 module BitStream
 
+%default total
+
 data Ty = TyStream
         | TyOutput Nat
         | TyFun Ty -- return type
@@ -10,12 +12,13 @@ data BitStream : (inputWidth : Nat) -> (environmentDepth : Nat) -> (type : Ty) -
   Lam : BitStream n (S e) t -> BitStream n e (TyFun t)
   App : BitStream n e (TyFun t) -> BitStream n e TyStream -> BitStream n e t
   Ref : Fin e -> BitStream n e TyStream
-  Output : Vect (BitStream n e TyStream) c -> BitStream n e (TyOutput c)
+  Output : Vect c (BitStream n e TyStream) -> BitStream n e (TyOutput c)
   Or : BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
   And : BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
   XOr : BitStream n e TyStream ->  BitStream n e TyStream -> BitStream n e TyStream
   Not : BitStream n e TyStream -> BitStream n e TyStream
   Add : BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
+  Sub : BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
   Advance : Bits64 -> BitStream n e TyStream -> BitStream n e TyStream
 
 bslet : BitStream n e TyStream -> BitStream n (S e) t -> BitStream n e t
@@ -24,10 +27,29 @@ bslet val body = App (Lam body) val
 toB128 : Integer -> Bits64x2
 toB128 x = prim__mkB64x2 (prim__truncBigInt_B64 (prim__ashrBigInt x 64)) (prim__truncBigInt_B64 x)
 
+bytePattern : Bits8 -> BitStream n e TyStream
+bytePattern byte = Pattern (prim__bitcastB8x16_B64x2 (uniformB8x16 byte))
+
+infixl 7 .&.
+(.&.) : BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
+l .&. r = And l r
+
+infixl 5 .|.
+(.|.) : BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
+l .|. r = Or l r
+
+infixl 6 .^.
+(.^.) : BitStream n e TyStream -> BitStream n e TyStream -> BitStream n e TyStream
+l .^. r = XOr l r
+
+infixl 8 .>>.
+(.>>.) : BitStream n e TyStream -> Bits64 -> BitStream n e TyStream
+stream .>>. shift = Advance shift stream
+
 dsl bitstream
   let = bslet
   variable = Ref
-  index_first = fO
+  index_first = fZ
   index_next = fS
   lambda = Lam
 
@@ -46,6 +68,7 @@ bitAt8 pos x = 0 /= prim__andB8 x (prim__shlB8 1 pos)
 showB8 : Bits8 -> String
 showB8 x = helper 8
   where
+    %assert_total
     helper : Bits8 -> String
     helper n = if n == 0 then ""
                else (if bitAt8 (n-1) x then "1" else "0") ++ helper (n-1)
@@ -53,35 +76,39 @@ showB8 x = helper 8
 showB64 : Bits64 -> String
 showB64 x = helper 64
   where
+    %assert_total
     helper : Bits64 -> String
     helper n = if n == 0 then ""
                else (if bitAt64 (n-1) x then "1" else "0") ++ helper (n-1)
 
+%assert_total
 showB128 : Bits64x2 -> String
 showB128 v = showB64 (prim__indexB64x2 v 0) ++ showB64 (prim__indexB64x2 v 1)
 
 bitAt : Bits8 -> Bits8 -> Bool
 bitAt pos x = 0 /= prim__andB8 x (prim__shlB8 1 pos)
 
+%assert_total
 finToB8 : Fin n -> Bits8 -- Should be Fin 256, but a general weaken is too slow
-finToB8 fO = 0
+finToB8 fZ = 0
 finToB8 (fS x) = 1 + finToB8 (weaken x)
 
 basis : Bits8 -> BitStream 8 e TyStream
 basis b = helper 7
   where
+    %assert_total
     helper : Fin 8 -> BitStream 8 e TyStream
-    helper fO = if bitAt 0 b then Basis 0 else Not (Basis 0)
+    helper fZ = if bitAt 0 b then Basis 0 else Not (Basis 0)
     helper (fS x) = And (helper (weaken x)) (if bitAt (finToB8 (fS x)) b then Basis (fS x) else Not (Basis (fS x)))
 
 char : Char -> BitStream 8 e TyStream
-char = basis . prim__truncInt_B8 . prim__charToInt
+char c = basis (prim__truncInt_B8 (prim__charToInt c))
 
-all : Vect (BitStream n e TyStream) (S k) -> BitStream n e TyStream
+all : Vect (S k) (BitStream n e TyStream) -> BitStream n e TyStream
 all [x] = x
 all (x::(y::ys)) = And x (all (y::ys))
 
-any : Vect (BitStream n e TyStream) (S k) -> BitStream n e TyStream
+any : Vect (S k) (BitStream n e TyStream) -> BitStream n e TyStream
 any [x] = x
 any (x::(y::ys)) = Or x (any (y::ys))
 
@@ -113,3 +140,4 @@ intStart = bitstream (
   let d = digit in
   [| scan d (Not d) |]
   )
+

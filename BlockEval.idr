@@ -94,9 +94,7 @@ evalBlock bs env (App f x) = do
 evalBlock _ env (Ref var) = pure (index var env)
 evalBlock {n=n} {m=m} bs env (Output xs) =
   mapEB (the (BitStream n m TyStream -> evalBlockTy TyStream) (evalBlock bs env)) xs
-evalBlock bs env (Or l r) = [| prim__orB64x2
-                               (the (evalBlockTy TyStream) (evalBlock bs env l))
-                               (the (evalBlockTy TyStream) (evalBlock bs env r)) |]
+evalBlock bs env (Or l r) = [| prim__orB64x2 (evalBlock bs env l) (evalBlock bs env r) |]
 evalBlock bs env (And l r) = [| prim__andB64x2
                                 (the (evalBlockTy TyStream) (evalBlock bs env l))
                                 (the (evalBlockTy TyStream) (evalBlock bs env r)) |]
@@ -111,17 +109,24 @@ evalBlock bs env (Add ls rs) = do
   let x = addWithCarry128 carryIn l r
   tellCarry (fst x)
   pure (snd x)
+evalBlock bs env (Sub ls rs) = do -- TODO: Borrow propagation
+  l <- the (evalBlockTy TyStream) (evalBlock bs env ls)
+  r <- the (evalBlockTy TyStream) (evalBlock bs env rs)
+  pure (prim__subB64x2 l r)
 evalBlock bs env (Advance shift s) = do
   carryIn <- popCarry
   block <- evalBlock bs env s
-  let backshift = 64 - shift
-  tellCarry (prim__lshrB64 (prim__indexB64x2 block 0) backshift)
-  let a = prim__shlB64x2 block (uniformB64x2 shift)
-  pure (prim__mkB64x2 (prim__orB64 (prim__indexB64x2 a 0) (prim__lshrB64 (prim__indexB64x2 block 1) backshift))
-                      (prim__orB64 (prim__indexB64x2 a 1) carryIn))
+  if shift == 64
+    then do tellCarry (prim__indexB64x2 block 0)
+            pure (prim__mkB64x2 (prim__indexB64x2 block 1) carryIn)
+    else do let backshift = 64 - shift
+            tellCarry (prim__lshrB64 (prim__indexB64x2 block 0) backshift)
+            let a = prim__shlB64x2 block (uniformB64x2 shift)
+            pure (prim__mkB64x2 (prim__orB64 (prim__indexB64x2 a 0) (prim__lshrB64 (prim__indexB64x2 block 1) backshift))
+                                (prim__orB64 (prim__indexB64x2 a 1) carryIn))
 
 test : BitStream 2 0 (TyFun TyStream)
-test = bitstream (\x => Advance 1 x)
+test = bitstream (\x => Advance 64 x)
 
 partial
 test' : Bits64x2 -> (List Bits64, Bits64x2)
