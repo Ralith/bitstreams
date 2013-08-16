@@ -76,11 +76,7 @@ addWithCarry128 carry l r =
   (newCarry + c3, prim__mkB64x2 hsum lsum)
 
 mapEB : (a -> EvalBlock b) -> Vect n a -> EvalBlock (Vect n b)
-mapEB f [] = pure []
-mapEB f (x::xs) = do
-  x' <- f x
-  xs' <- mapEB f xs
-  pure (x'::xs')
+mapEB f xs = sequence (map f xs)
 
 %assert_total
 evalBlock : (bases : Vect n Bits64x2) -> (env : Vect m Bits64x2) -> {static} BitStream n m ty -> evalBlockTy ty
@@ -88,30 +84,26 @@ evalBlock _ _ (Pattern x) = pure x
 evalBlock bs _ (Basis i) = pure (index i bs)
 evalBlock {ty=TyFun rty} bs env (Lam body) = pure (\v => evalBlock bs (v :: env) body)
 evalBlock bs env (App f x) = do
-  arg <- the (evalBlockTy TyStream) (evalBlock bs env x)
+  arg <- evalBlock bs env x
   fn <- evalBlock bs env f
   fn arg
 evalBlock _ env (Ref var) = pure (index var env)
 evalBlock {n=n} {m=m} bs env (Output xs) =
-  mapEB (the (BitStream n m TyStream -> evalBlockTy TyStream) (evalBlock bs env)) xs
+  mapEB (evalBlock bs env) xs
 evalBlock bs env (Or l r) = [| prim__orB64x2 (evalBlock bs env l) (evalBlock bs env r) |]
-evalBlock bs env (And l r) = [| prim__andB64x2
-                                (the (evalBlockTy TyStream) (evalBlock bs env l))
-                                (the (evalBlockTy TyStream) (evalBlock bs env r)) |]
-evalBlock bs env (XOr l r) = [| prim__xorB64x2
-                                (the (evalBlockTy TyStream) (evalBlock bs env l))
-                                (the (evalBlockTy TyStream) (evalBlock bs env r)) |]
-evalBlock bs env (Not b) = [| prim__complB64x2 (the (evalBlockTy TyStream) (evalBlock bs env b)) |]
+evalBlock bs env (And l r) = [| prim__andB64x2 (evalBlock bs env l) (evalBlock bs env r) |]
+evalBlock bs env (XOr l r) = [| prim__xorB64x2 (evalBlock bs env l) (evalBlock bs env r) |]
+evalBlock bs env (Not b) = [| prim__complB64x2 (evalBlock bs env b) |]
 evalBlock bs env (Add ls rs) = do
   carryIn <- popCarry
-  l <- the (evalBlockTy TyStream) (evalBlock bs env ls)
-  r <- the (evalBlockTy TyStream) (evalBlock bs env rs)
-  let x = addWithCarry128 carryIn l r
-  tellCarry (fst x)
-  pure (snd x)
+  l <- evalBlock bs env ls
+  r <- evalBlock bs env rs
+  let (carry, result) = addWithCarry128 carryIn l r
+  tellCarry carry
+  pure result
 evalBlock bs env (Sub ls rs) = do -- TODO: Borrow propagation
-  l <- the (evalBlockTy TyStream) (evalBlock bs env ls)
-  r <- the (evalBlockTy TyStream) (evalBlock bs env rs)
+  l <- evalBlock bs env ls
+  r <- evalBlock bs env rs
   pure (prim__subB64x2 l r)
 evalBlock bs env (Advance shift s) = do
   carryIn <- popCarry
@@ -130,5 +122,5 @@ test = bitstream (\x => Advance 64 x)
 
 partial
 test' : Bits64x2 -> (List Bits64, Bits64x2)
-test' x = runEval [] (do fn <- the (evalBlockTy (TyFun TyStream)) (evalBlock [uniformB64x2 (pow 2 128 - 1), uniformB64x2 0] [] BlockEval.test)
+test' x = runEval [] (do fn <- evalBlock [uniformB64x2 (pow 2 128 - 1), uniformB64x2 0] [] BlockEval.test
                          fn x)
