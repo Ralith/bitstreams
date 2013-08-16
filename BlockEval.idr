@@ -49,7 +49,7 @@ tellCarry c = EB (\cs => ([c], (), cs))
 mutual
   evalBlockTy' : Ty -> Type
   evalBlockTy' TyStream = Bits64x2
-  evalBlockTy' (TyOutput n) = Vect Bits64x2 n
+  evalBlockTy' (TyOutput n) = Vect n Bits64x2
   evalBlockTy' (TyFun t) = Bits64x2 -> evalBlockTy t
 
   evalBlockTy : Ty -> Type
@@ -75,7 +75,7 @@ addWithCarry128 carry l r =
   let (newCarry, hsum) = addWithCarry lh rh' in
   (newCarry + c3, prim__mkB64x2 hsum lsum)
 
-mapEB : (a -> EvalBlock b) -> Vect a n -> EvalBlock (Vect b n)
+mapEB : (a -> EvalBlock b) -> Vect n a -> EvalBlock (Vect n b)
 mapEB f [] = pure []
 mapEB f (x::xs) = do
   x' <- f x
@@ -83,7 +83,7 @@ mapEB f (x::xs) = do
   pure (x'::xs')
 
 %assert_total
-evalBlock : (bases : Vect Bits64x2 n) -> (env : Vect Bits64x2 m) -> {static} BitStream n m ty -> evalBlockTy ty
+evalBlock : (bases : Vect n Bits64x2) -> (env : Vect m Bits64x2) -> {static} BitStream n m ty -> evalBlockTy ty
 evalBlock _ _ (Pattern x) = pure x
 evalBlock bs _ (Basis i) = pure (index i bs)
 evalBlock {ty=TyFun rty} bs env (Lam body) = pure (\v => evalBlock bs (v :: env) body)

@@ -29,7 +29,7 @@ vsel cond then_ else_ =
 flipB64x2 : Bits64x2 -> Bits64x2
 flipB64x2 v = prim__mkB64x2 (prim__indexB64x2 v 1) (prim__indexB64x2 v 0)
 
-transpose : Vect Bits8x16 8 -> Vect Bits64x2 8
+transpose : Vect 8 Bits8x16 -> Vect 8 Bits64x2
 transpose xs =
    let s0 = get 0 in
    let s1 = get 1 in
@@ -65,15 +65,15 @@ transpose xs =
       )
 
 ApplyTy : Type -> Type -> Nat -> Type
-ApplyTy r _ O = r
+ApplyTy r _ Z = r
 ApplyTy r a (S k) = a -> ApplyTy r a k
 
-apply : (ApplyTy a b n) -> Vect b n -> a
-apply {n=O}   x [] = x
+apply : (ApplyTy a b n) -> Vect n b -> a
+apply {n=Z}   x [] = x
 apply {n=S _} f (x::xs) = apply (f x) xs
 
 partial -- TODO: Should reduce to memcpy
-packBytes : Int -> String -> Vect Bits8x16 8
+packBytes : Int -> String -> Vect 8 Bits8x16
 packBytes start xs = map take16 [0,1,2,3,4,5,6,7]
   where
     partial
@@ -82,12 +82,12 @@ packBytes start xs = map take16 [0,1,2,3,4,5,6,7]
 
     partial
     take16 : Int -> Bits8x16
-    take16 off = apply prim__mkB8x16 (map (\x => b ((16*off+start)+x)) [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15])
+    take16 off = apply prim__mkB8x16 (map (\x => b ((16*off+start)+x)) (the (Vect 16 Int) [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]))
 
 ipsum : String
 ipsum = "Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
 
-mapIO : (a -> IO ()) -> Vect a n -> IO ()
+mapIO : (a -> IO ()) -> Vect n a -> IO ()
 mapIO _ [] = pure ()
 mapIO f (x::xs) = do
   f x
@@ -104,7 +104,7 @@ getByte : String -> Int -> Bits8
 getByte str idx = prim__truncInt_B8 (prim__charToInt (prim__strIndex str idx))
 
 %assert_total
-parseString : {static} BitStream 8 0 (TyOutput n) -> String -> List (Vect Bits64x2 n)
+parseString : {static} BitStream 8 0 (TyOutput n) -> String -> List (Vect n Bits64x2)
 parseString {n=n} bs str = if rem /= 0 then parseString bs (str `Builtins.(++)` pack (replicate (fromInteger (prim__zextInt_BigInt (128 - rem))) ' ')) -- TODO: Pad with \0
                            else helper 0 []
   where
@@ -116,7 +116,7 @@ parseString {n=n} bs str = if rem /= 0 then parseString bs (str `Builtins.(++)` 
     rem = prim__sremInt len 128
 
     %assert_total
-    helper : Int -> List Bits64 -> List (Vect Bits64x2 n)
+    helper : Int -> List Bits64 -> List (Vect n Bits64x2)
     helper offset carriesIn =
       let (carriesOut, outputs) = runEval carriesIn (evalBlock (transpose (packBytes offset str)) [] bs) in
       if offset /= len - 128 then outputs :: (helper (offset + 128) carriesOut)
@@ -125,7 +125,7 @@ parseString {n=n} bs str = if rem /= 0 then parseString bs (str `Builtins.(++)` 
 passthrough : BitStream 8 0 (TyOutput 10)
 passthrough = Output [Basis 7, Basis 6, Basis 5, Basis 4, Basis 3, Basis 2, Basis 1, Basis 0, Add (Basis 0) (Basis 1), Advance 4 (Basis 0)]
 
-showBlock : Vect Bits64x2 n -> String
+showBlock : Vect n Bits64x2 -> String
 showBlock b = foldl (++) "" (intersperse "\n" (toList (map (\x => prim__strRev (showB128 x)) b)))
 
 partial
